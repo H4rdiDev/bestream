@@ -1,9 +1,9 @@
 {
-  "name": "diyymotion-clean-story-backend",
-  "version": "1.0.0",
+  "name": "diyymotion-clean-story-server",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Clean Story backend for DiyyMotion using Baileys pairing code and temporary video cleanup.",
+  "description": "Clean Story backend for DiyyMotion. Backend owns WhatsApp session; frontend only uploads video.",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js"
