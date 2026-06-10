@@ -24,6 +24,8 @@ const PORT = Number(process.env.PORT || 3000);
 const CLEAN_STORY_SECRET = process.env.CLEAN_STORY_SECRET || '';
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const DEFAULT_PAIR_PHONE = cleanPhone(process.env.PAIR_PHONE || '628137961654');
+const AUTO_PAIR_ON_START = String(process.env.AUTO_PAIR_ON_START || 'true').toLowerCase() !== 'false';
+const LOG_PAIRING_CODE = String(process.env.LOG_PAIRING_CODE || 'true').toLowerCase() !== 'false';
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' });
 
 mkdirSync(AUTH_DIR, { recursive: true });
@@ -74,9 +76,33 @@ async function safeReadAuthFiles() {
   }
 }
 
-async function hasStoredSession() {
+async function readAuthStatus() {
   const files = await safeReadAuthFiles();
-  return files.some((name) => name.includes('creds') || name.endsWith('.json'));
+  const credsPath = path.join(AUTH_DIR, 'creds.json');
+  let creds = null;
+  try {
+    if (existsSync(credsPath)) creds = JSON.parse(await fs.readFile(credsPath, 'utf8'));
+  } catch {
+    creds = null;
+  }
+
+  const registered = Boolean(creds?.registered || creds?.me?.id || creds?.account);
+  return {
+    hasFiles: files.length > 0,
+    hasCreds: Boolean(creds),
+    registered,
+    filesCount: files.length,
+    jid: creds?.me?.id || null,
+  };
+}
+
+async function hasStoredSession() {
+  const status = await readAuthStatus();
+  return status.registered;
+}
+
+function formatPairCode(code = '') {
+  return String(code || '').replace(/[^a-zA-Z0-9]/g, '').match(/.{1,4}/g)?.join('-') || String(code || '');
 }
 
 async function cleanupOldUploads(maxAgeMs = 60 * 60 * 1000) {
@@ -205,20 +231,73 @@ function waitForOpen(wa, timeoutMs = 45_000) {
 
 async function getStatus({ wake = false } = {}) {
   const session = await hasStoredSession();
+  const authStatus = await readAuthStatus();
   if (wake && session && !connected) {
     ensureSocket().catch(() => {});
   }
   return {
     ok: true,
     service: 'DiyyMotion Clean Story Backend',
+    version: '2.2.0',
     connected,
     hasSession: session,
     ready: connected || session,
     message: connected ? 'READY. Frontend cukup upload video.' : session ? 'Session ada. Socket akan bangun saat kirim video.' : lastConnectionMessage,
     maxVideoMb: MAX_VIDEO_MB,
     pairPhone: DEFAULT_PAIR_PHONE,
+    auth: authStatus,
+    pairingCodeLogged: Boolean(lastPairCode),
+    lastPairAt,
     uptime: process.uptime(),
   };
+}
+
+let autoPairing = false;
+async function autoPairToLog(reason = 'startup') {
+  if (!AUTO_PAIR_ON_START || !DEFAULT_PAIR_PHONE) return;
+  if (autoPairing) return;
+  autoPairing = true;
+
+  try {
+    const session = await hasStoredSession();
+    if (session) {
+      console.log('[DiyyMotion] Registered session found. Starting WhatsApp socket...');
+      ensureSocket().catch((err) => console.error('[DiyyMotion] Auto reconnect failed:', err?.message || err));
+      return;
+    }
+
+    console.log('');
+    console.log('============================================================');
+    console.log('[DiyyMotion] WhatsApp belum tersambung. Auto pairing dimulai.');
+    console.log(`[DiyyMotion] Pair phone: ${DEFAULT_PAIR_PHONE}`);
+    console.log(`[DiyyMotion] Trigger: ${reason}`);
+    console.log('============================================================');
+
+    const wa = await ensureSocket();
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    const rawCode = await wa.requestPairingCode(DEFAULT_PAIR_PHONE);
+    lastPairCode = formatPairCode(rawCode);
+    lastPairAt = Date.now();
+
+    if (LOG_PAIRING_CODE) {
+      console.log('');
+      console.log('████████████████████████████████████████████████████████████');
+      console.log('DIYYMOTION WHATSAPP PAIRING CODE');
+      console.log(`PHONE : ${DEFAULT_PAIR_PHONE}`);
+      console.log(`CODE  : ${lastPairCode}`);
+      console.log('BUKA WhatsApp > Perangkat tertaut > Tautkan dengan nomor telepon');
+      console.log('Masukkan kode di atas. Connect cukup sekali selama session tidak logout.');
+      console.log('████████████████████████████████████████████████████████████');
+      console.log('');
+    }
+
+    lastConnectionMessage = 'Pairing code sudah dicetak di Railway logs.';
+  } catch (err) {
+    console.error('[DiyyMotion] Auto pairing gagal:', err?.message || err);
+    lastConnectionMessage = err?.message || 'Auto pairing gagal.';
+  } finally {
+    autoPairing = false;
+  }
 }
 
 app.get('/', async (_req, res) => {
@@ -237,21 +316,16 @@ app.get('/status', requireSecret, async (_req, res) => {
   res.json(await getStatus({ wake: true }));
 });
 
-app.get('/prcd', (_req, res) => {
-  const secretQuery = CLEAN_STORY_SECRET ? `&secret=${encodeURIComponent(CLEAN_STORY_SECRET)}` : '';
+app.get('/prcd', async (_req, res) => {
+  await autoPairToLog('manual /prcd');
+  const status = await getStatus({ wake: true });
   res.type('html').send(`<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DiyyMotion Pairing</title>
+<title>DiyyMotion Pairing Logs</title>
 <style>
 :root{color-scheme:dark;--bg:#202226;--card:#343A40;--green:#2F5D50;--mint:#8FB9AB;--ivory:#EFF7F4}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 20% 10%,rgba(143,185,171,.25),transparent 34%),linear-gradient(135deg,var(--bg),#0f1114);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;color:var(--ivory);padding:18px}.card{width:min(520px,100%);border:1px solid rgba(239,247,244,.16);border-radius:34px;padding:28px;background:linear-gradient(145deg,rgba(239,247,244,.13),rgba(47,93,80,.18));box-shadow:0 34px 100px rgba(0,0,0,.42);backdrop-filter:blur(18px)}.k{color:var(--mint);font-size:13px;text-transform:uppercase;letter-spacing:.22em;font-weight:900}.code{font-size:clamp(42px,14vw,68px);letter-spacing:.08em;font-weight:950;margin:18px 0;color:#fff}.status{line-height:1.6;color:rgba(239,247,244,.75)}button{border:0;border-radius:999px;padding:15px 20px;font-weight:900;background:linear-gradient(135deg,var(--mint),var(--green));color:#101412;margin-top:18px;width:100%;font-size:16px}.small{font-size:13px;color:rgba(239,247,244,.55);margin-top:18px}
-</style></head><body><main class="card"><div class="k">DiyyMotion backend pairing</div><h1>WhatsApp Pairing</h1><p class="status">Nomor: <b>${jsonEscape(DEFAULT_PAIR_PHONE)}</b>. Connect cukup sekali. Setelah READY, frontend cuma upload video.</p><div id="code" class="code">...</div><p id="status" class="status">Mengecek session...</p><button id="retry">Refresh / Pair ulang</button><p class="small">Buka WhatsApp → Perangkat tertaut → Tautkan dengan nomor telepon.</p></main>
-<script>
-const codeEl=document.getElementById('code');const statusEl=document.getElementById('status');const phone='${jsonEscape(DEFAULT_PAIR_PHONE)}';
-async function check(){try{const r=await fetch('/status${CLEAN_STORY_SECRET ? `?secret=${encodeURIComponent(CLEAN_STORY_SECRET)}` : ''}');const j=await r.json();if(j.connected||j.hasSession){codeEl.textContent='READY';statusEl.textContent=j.message||'Session siap.';return true;}return false}catch(e){statusEl.textContent=e.message;return false}}
-function pair(){codeEl.textContent='...';statusEl.textContent='Meminta pairing code...';const es=new EventSource('/pair?phone='+encodeURIComponent(phone)+'${secretQuery}');es.addEventListener('code',ev=>{const j=JSON.parse(ev.data||'{}');codeEl.textContent=j.code||'-';statusEl.textContent='Masukkan kode ini di WhatsApp.'});es.addEventListener('status',ev=>{const j=JSON.parse(ev.data||'{}');if(j.message)statusEl.textContent=j.message});es.addEventListener('connected',ev=>{codeEl.textContent='READY';statusEl.textContent='Connected. Session disimpan di backend.';es.close()});es.addEventListener('error',()=>{statusEl.textContent='Pairing berhenti/timeout. Klik refresh kalau belum READY.';es.close()})}
-document.getElementById('retry').onclick=async()=>{if(!(await check())) pair()};(async()=>{if(!(await check())) pair()})();
-</script></body></html>`);
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 20% 10%,rgba(143,185,171,.24),transparent 34%),linear-gradient(135deg,var(--bg),#0f1114);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;color:var(--ivory);padding:18px}.card{width:min(560px,100%);border:1px solid rgba(239,247,244,.16);border-radius:34px;padding:28px;background:linear-gradient(145deg,rgba(239,247,244,.13),rgba(47,93,80,.18));box-shadow:0 34px 100px rgba(0,0,0,.42);backdrop-filter:blur(18px)}.k{color:var(--mint);font-size:13px;text-transform:uppercase;letter-spacing:.22em;font-weight:900}.ready{font-size:clamp(40px,12vw,64px);font-weight:950;margin:18px 0;color:#fff}.status{line-height:1.6;color:rgba(239,247,244,.78)}.box{margin-top:18px;padding:16px;border-radius:20px;background:rgba(0,0,0,.2);border:1px solid rgba(239,247,244,.12);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.small{font-size:13px;color:rgba(239,247,244,.55);margin-top:18px}a{color:var(--mint);font-weight:800}
+</style></head><body><main class="card"><div class="k">DiyyMotion backend pairing</div><h1>Pairing via Railway Logs</h1><div class="ready">${status.connected || status.hasSession ? 'READY' : 'CHECK LOGS'}</div><p class="status">Nomor pairing: <b>${jsonEscape(DEFAULT_PAIR_PHONE)}</b>. Backend otomatis request pairing code dan mencetaknya di Railway logs.</p><div class="box">${jsonEscape(status.message || '')}<br>hasSession: ${status.hasSession}<br>connected: ${status.connected}</div><p class="small">Railway → service backend → Logs. Cari tulisan <b>DIYYMOTION WHATSAPP PAIRING CODE</b>, lalu masukkan kode itu di WhatsApp → Perangkat tertaut → Tautkan dengan nomor telepon.</p></main></body></html>`);
 });
 
 app.get('/pair', requireSecret, async (req, res) => {
@@ -356,7 +430,7 @@ setInterval(() => cleanupOldUploads().catch(() => {}), 30 * 60 * 1000).unref?.()
 
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`DiyyMotion Clean Story backend running on :${PORT}`);
-  if (await hasStoredSession()) {
-    ensureSocket().catch((err) => console.error('Auto socket start failed:', err?.message || err));
-  }
+  console.log(`[DiyyMotion] Pair phone: ${DEFAULT_PAIR_PHONE}`);
+  console.log(`[DiyyMotion] AUTH_DIR: ${AUTH_DIR}`);
+  setTimeout(() => autoPairToLog('server start'), 1200);
 });
