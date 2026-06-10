@@ -1,0 +1,22 @@
+{
+  "name": "diyymotion-clean-story-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Clean Story backend for DiyyMotion using Baileys pairing code and temporary video cleanup.",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest",
+    "cors": "latest",
+    "express": "latest",
+    "multer": "latest",
+    "pino": "latest",
+    "qrcode-terminal": "latest"
+  }
+}

@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: diyymotion-clean-story
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: MAX_VIDEO_MB
+        value: "100"
+      - key: BAILEYS_LOG_LEVEL
+        value: silent
+      - key: CORS_ORIGIN
+        value: "*"
