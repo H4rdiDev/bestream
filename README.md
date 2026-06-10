@@ -1,73 +1,52 @@
-# DiyyMotion Clean Story Backend
+# DiyyMotion Clean Story Backend v22
 
-Backend Node.js untuk **Clean Story**. WhatsApp connect **cukup sekali di backend** lewat halaman `/prcd`. Setelah session tersimpan, frontend DiyyMotion cuma perlu upload video dan isi nomor tujuan.
+Backend Baileys untuk Clean Story. Versi ini otomatis connect ke nomor `PAIR_PHONE` saat server start. Pairing code dicetak di Railway Logs, bukan di frontend.
 
 ## Deploy Railway
 
-Upload folder ini ke GitHub, lalu Railway → New Project → Deploy from GitHub Repo.
+Build command:
 
-Setting default:
-
-```text
-Build Command: npm install
-Start Command: npm start
+```bash
+npm install
 ```
 
-Environment variables:
+Start command:
+
+```bash
+npm start
+```
+
+## Environment Variables
 
 ```env
 CORS_ORIGIN=https://diyymotion.vercel.app
 MAX_VIDEO_MB=100
 BAILEYS_LOG_LEVEL=silent
 PAIR_PHONE=628137961654
+AUTO_PAIR_ON_START=true
+LOG_PAIRING_CODE=true
 ```
 
-Opsional kalau mau endpoint dikunci:
-
-```env
-CLEAN_STORY_SECRET=isi_secret_random
-```
-
-Kalau pakai secret, frontend Vercel juga harus punya:
-
-```env
-VITE_CLEAN_STORY_SECRET=isi_secret_random
-```
-
-## Pairing sekali
-
-Buka domain Railway backend:
-
-```text
-https://domain-railway-kamu.up.railway.app/prcd
-```
-
-Masukkan kode pairing di WhatsApp → Perangkat tertaut → Tautkan dengan nomor telepon.
-
-Setelah halaman menampilkan `READY`, session sudah tersimpan. Frontend tidak perlu tombol pairing lagi.
-
-## Endpoint
-
-```text
-GET  /                  status JSON
-GET  /health            OK
-GET  /healt             OK alias typo, karena manusia tetap manusia
-GET  /status            cek session, auto wake socket kalau session ada
-GET  /prcd              halaman pairing backend
-GET  /pair?phone=628xx  pairing code SSE
-POST /send-video        field: to, caption, video
-```
-
-## Storage cleanup
-
-Video upload disimpan sementara di `/tmp/diyymotion-clean-story`, dikirim ke WhatsApp, lalu otomatis dihapus di blok `finally`. Ada cleanup tambahan tiap 30 menit untuk file lebih tua dari 1 jam.
-
-## Session agar awet
-
-Session default disimpan di folder `auth`. Kalau Railway kamu pakai Volume, set:
+Opsional jika pakai Railway Volume agar session awet:
 
 ```env
 AUTH_DIR=/data/auth
+UPLOAD_DIR=/tmp/diyymotion-clean-story
 ```
 
-Kalau tanpa volume, session bisa hilang saat redeploy/rebuild. Itu bukan bug, itu hosting gratis/hemat sedang menagih harga diri.
+## Cara pairing
+
+1. Deploy / restart service Railway.
+2. Buka Railway → Service → Logs.
+3. Cari blok `DIYYMOTION WHATSAPP PAIRING CODE`.
+4. Masukkan kode di WhatsApp → Perangkat tertaut → Tautkan dengan nomor telepon.
+5. Setelah session tersimpan, frontend cukup upload video dan kirim.
+
+## Endpoint
+
+- `GET /health` → OK
+- `GET /status` → status JSON
+- `GET /prcd` → trigger pairing + instruksi log
+- `POST /send-video` → multipart form-data: `to`, `caption`, `video`
+
+File video temp otomatis dihapus setelah terkirim atau gagal.
